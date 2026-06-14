@@ -5,6 +5,34 @@
 -- public.room_members(room_id uuid references public.rooms(id), user_id uuid references auth.users(id), role text, created_at timestamptz)
 -- public.messages(id uuid primary key, room_id uuid references public.rooms(id), sender_id uuid references auth.users(id), text text, created_at timestamptz)
 
+alter table public.rooms
+add column if not exists room_name text;
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'rooms'
+      and column_name = 'name'
+  ) then
+    update public.rooms
+    set room_name = coalesce(room_name, name)
+    where room_name is null;
+  end if;
+end $$;
+
+alter table public.rooms
+alter column room_name set default 'Untitled room';
+
+update public.rooms
+set room_name = 'Untitled room'
+where room_name is null;
+
+alter table public.rooms
+alter column room_name set not null;
+
 alter table public.profiles enable row level security;
 alter table public.rooms enable row level security;
 alter table public.room_members enable row level security;

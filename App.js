@@ -38,29 +38,39 @@ function normalizeRoom(room) {
 }
 
 async function fetchUserRooms(userId) {
-  const membershipQuery = await supabase
+  const fetchMembershipRooms = (roomColumns) => supabase
     .from("room_members")
-    .select("room_id, rooms(id, room_name, name, is_group, description, created_at)")
+    .select(`room_id, rooms(id, ${roomColumns}, is_group, description, created_at)`)
     .eq("user_id", userId)
     .order("created_at", { referencedTable: "rooms", ascending: false });
 
-  if (!membershipQuery.error) {
-    return (membershipQuery.data ?? [])
+  const membershipQuery = await fetchMembershipRooms("room_name");
+  const resolvedMembershipQuery = membershipQuery.error?.message?.includes("room_name")
+    ? await fetchMembershipRooms("name")
+    : membershipQuery;
+
+  if (!resolvedMembershipQuery.error) {
+    return (resolvedMembershipQuery.data ?? [])
       .map((membership) => membership.rooms)
       .filter(Boolean)
       .map(normalizeRoom);
   }
 
-  const directRoomQuery = await supabase
+  const fetchDirectRooms = (roomColumns) => supabase
     .from("rooms")
-    .select("id, room_name, name, is_group, description, created_at")
+    .select(`id, ${roomColumns}, is_group, description, created_at`)
     .order("created_at", { ascending: false });
 
-  if (directRoomQuery.error) {
-    throw membershipQuery.error;
+  const directRoomQuery = await fetchDirectRooms("room_name");
+  const resolvedDirectRoomQuery = directRoomQuery.error?.message?.includes("room_name")
+    ? await fetchDirectRooms("name")
+    : directRoomQuery;
+
+  if (resolvedDirectRoomQuery.error) {
+    throw resolvedMembershipQuery.error;
   }
 
-  return (directRoomQuery.data ?? []).map(normalizeRoom);
+  return (resolvedDirectRoomQuery.data ?? []).map(normalizeRoom);
 }
 
 async function ensureAuthenticatedProfile(user) {
