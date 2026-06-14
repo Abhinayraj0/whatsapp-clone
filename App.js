@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   SafeAreaView,
   StatusBar,
@@ -10,75 +11,198 @@ import {
   useWindowDimensions,
   View
 } from "react-native";
+import AuthScreen from "./AuthScreen";
 import ChatScreen from "./ChatScreen";
+import { supabase } from "./supabaseClient";
 
-const chatRooms = [
-  {
-    id: "general",
-    room_name: "General Chat",
-    is_group: true,
-    initials: "GC",
-    preview: "Perfect. The mobile keyboard behavior matters most.",
-    unread: 2
-  },
-  {
-    id: "product",
-    room_name: "Product Team",
-    is_group: true,
-    initials: "PT",
-    preview: "Can we review the realtime subscription flow?",
+function getRoomInitials(name = "Chat") {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "CH";
+}
+
+function normalizeRoom(room) {
+  const roomName = room.room_name ?? room.name ?? "Untitled room";
+
+  return {
+    id: room.id,
+    room_name: roomName,
+    is_group: Boolean(room.is_group),
+    initials: room.initials ?? getRoomInitials(roomName),
+    preview: room.description ?? "Realtime room",
     unread: 0
-  },
-  {
-    id: "maya",
-    room_name: "Maya Patel",
-    is_group: false,
-    initials: "MP",
-    preview: "I pushed the schema migration.",
-    unread: 1
-  },
-  {
-    id: "ops",
-    room_name: "Launch Ops",
-    is_group: true,
-    initials: "LO",
-    preview: "Production checklist is nearly ready.",
-    unread: 0
+  };
+}
+
+async function fetchUserRooms(userId) {
+  const membershipQuery = await supabase
+    .from("room_members")
+    .select("room_id, rooms(id, room_name, name, is_group, description, created_at)")
+    .eq("user_id", userId)
+    .order("created_at", { referencedTable: "rooms", ascending: false });
+
+  if (!membershipQuery.error) {
+    return (membershipQuery.data ?? [])
+      .map((membership) => membership.rooms)
+      .filter(Boolean)
+      .map(normalizeRoom);
   }
-];
+
+  const directRoomQuery = await supabase
+    .from("rooms")
+    .select("id, room_name, name, is_group, description, created_at")
+    .order("created_at", { ascending: false });
+
+  if (directRoomQuery.error) {
+    throw membershipQuery.error;
+  }
+
+  return (directRoomQuery.data ?? []).map(normalizeRoom);
+}
+
+async function ensureAuthenticatedProfile(user) {
+  if (!user?.id) {
+    return;
+  }
+
+  const metadataName = user.user_metadata?.full_name;
+  const emailName = user.email?.split("@")[0] ?? "Member";
+
+  await supabase.from("profiles").upsert(
+    {
+      id: user.id,
+      email: user.email,
+      full_name: metadataName || emailName,
+      updated_at: new Date().toISOString()
+    },
+    { onConflict: "id" }
+  );
+}
 
 export default function App() {
   const { width } = useWindowDimensions();
   const isMobile = width < 760;
-  const [selectedRoomId, setSelectedRoomId] = useState(chatRooms[0].id);
+  const [session, setSession] = useState(null);
+  const [isSessionLoading, setIsSessionLoading] = useState(true);
+  const [rooms, setRooms] = useState([]);
+  const [roomsError, setRoomsError] = useState("");
+  const [isRoomsLoading, setIsRoomsLoading] = useState(false);
+  const [selectedRoomId, setSelectedRoomId] = useState(null);
   const [isSidebarVisible, setIsSidebarVisible] = useState(!isMobile);
   const [searchText, setSearchText] = useState("");
 
+  useEffect(() => {
+    setIsSidebarVisible(!isMobile);
+  }, [isMobile]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (isMounted) {
+        setSession(data.session);
+        setIsSessionLoading(false);
+      }
+    });
+
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setIsSessionLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadRooms() {
+      if (!session?.user?.id) {
+        setRooms([]);
+        setSelectedRoomId(null);
+        return;
+      }
+
+      setIsRoomsLoading(true);
+      setRoomsError("");
+
+      try {
+        await ensureAuthenticatedProfile(session.user);
+        const nextRooms = await fetchUserRooms(session.user.id);
+
+        if (isMounted) {
+          setRooms(nextRooms);
+          setSelectedRoomId((currentRoomId) => {
+            if (nextRooms.some((room) => room.id === currentRoomId)) {
+              return currentRoomId;
+            }
+
+            return nextRooms[0]?.id ?? null;
+          });
+        }
+      } catch (error) {
+        if (isMounted) {
+          setRooms([]);
+          setSelectedRoomId(null);
+          setRoomsError(error.message ?? "Unable to load rooms.");
+        }
+      } finally {
+        if (isMounted) {
+          setIsRoomsLoading(false);
+        }
+      }
+    }
+
+    loadRooms();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [session?.user?.id]);
+
   const selectedRoom = useMemo(
-    () => chatRooms.find((room) => room.id === selectedRoomId) ?? chatRooms[0],
-    [selectedRoomId]
+    () => rooms.find((room) => room.id === selectedRoomId) ?? null,
+    [rooms, selectedRoomId]
   );
 
   const filteredRooms = useMemo(() => {
     const query = searchText.trim().toLowerCase();
 
     if (!query) {
-      return chatRooms;
+      return rooms;
     }
 
-    return chatRooms.filter((room) => room.room_name.toLowerCase().includes(query));
-  }, [searchText]);
+    return rooms.filter((room) => room.room_name.toLowerCase().includes(query));
+  }, [rooms, searchText]);
 
   const showSidebar = !isMobile || isSidebarVisible;
   const showChat = !isMobile || !isSidebarVisible;
 
-  const handleRoomPress = (room) => {
-    setSelectedRoomId(room.id);
+  const handleRoomPress = useCallback(
+    (room) => {
+      setSelectedRoomId(room.id);
 
-    if (isMobile) {
-      setIsSidebarVisible(false);
-    }
-  };
+      if (isMobile) {
+        setIsSidebarVisible(false);
+      }
+    },
+    [isMobile]
+  );
+
+  const handleSignOut = useCallback(async () => {
+    setRooms([]);
+    setSelectedRoomId(null);
+    setSearchText("");
+    await supabase.auth.signOut();
+  }, []);
 
   const renderRoom = ({ item }) => {
     const isActive = item.id === selectedRoomId;
@@ -97,22 +221,29 @@ export default function App() {
             <Text numberOfLines={1} style={styles.roomTitle}>
               {item.room_name}
             </Text>
-            <Text style={styles.roomTime}>Now</Text>
+            <Text style={styles.roomTime}>Live</Text>
           </View>
           <View style={styles.roomPreviewRow}>
             <Text numberOfLines={1} style={styles.roomPreview}>
               {item.preview}
             </Text>
-            {item.unread > 0 ? (
-              <View style={styles.unreadBadge}>
-                <Text style={styles.unreadText}>{item.unread}</Text>
-              </View>
-            ) : null}
           </View>
         </View>
       </TouchableOpacity>
     );
   };
+
+  if (isSessionLoading) {
+    return (
+      <SafeAreaView style={styles.loadingScreen}>
+        <ActivityIndicator color="#ffffff" size="large" />
+      </SafeAreaView>
+    );
+  }
+
+  if (!session) {
+    return <AuthScreen />;
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -121,19 +252,30 @@ export default function App() {
         {showSidebar ? (
           <View style={[styles.sidebar, isMobile && styles.mobileSidebar]}>
             <View style={styles.sidebarHeader}>
-              <View>
+              <View style={styles.headerIdentity}>
                 <Text style={styles.appTitle}>Chats</Text>
-                <Text style={styles.appSubtitle}>Expo + Supabase</Text>
+                <Text numberOfLines={1} style={styles.appSubtitle}>
+                  {session.user.email}
+                </Text>
               </View>
-              {isMobile ? (
+              <View style={styles.headerActions}>
                 <TouchableOpacity
                   accessibilityRole="button"
-                  onPress={() => setIsSidebarVisible(false)}
-                  style={styles.headerButton}
+                  onPress={handleSignOut}
+                  style={styles.signOutButton}
                 >
-                  <Text style={styles.headerButtonText}>×</Text>
+                  <Text style={styles.signOutButtonText}>Sign Out</Text>
                 </TouchableOpacity>
-              ) : null}
+                {isMobile ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    onPress={() => setIsSidebarVisible(false)}
+                    style={styles.headerButton}
+                  >
+                    <Text style={styles.headerButtonText}>x</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
 
             <View style={styles.searchWrap}>
@@ -146,9 +288,19 @@ export default function App() {
               />
             </View>
 
+            {roomsError ? <Text style={styles.sidebarMessage}>{roomsError}</Text> : null}
+            {!roomsError && isRoomsLoading ? (
+              <View style={styles.sidebarLoader}>
+                <ActivityIndicator color="#075e54" />
+              </View>
+            ) : null}
+            {!roomsError && !isRoomsLoading && filteredRooms.length === 0 ? (
+              <Text style={styles.sidebarMessage}>No authorized rooms found.</Text>
+            ) : null}
+
             <FlatList
               data={filteredRooms}
-              keyExtractor={(item) => item.id}
+              keyExtractor={(item) => String(item.id)}
               renderItem={renderRoom}
               contentContainerStyle={styles.roomList}
               keyboardShouldPersistTaps="handled"
@@ -164,14 +316,22 @@ export default function App() {
                 onPress={() => setIsSidebarVisible(true)}
                 style={styles.mobileMenuButton}
               >
-                <Text style={styles.mobileMenuButtonText}>☰</Text>
+                <Text style={styles.mobileMenuButtonText}>Menu</Text>
               </TouchableOpacity>
             ) : null}
-            <ChatScreen
-              room={selectedRoom}
-              showBackButton={isMobile}
-              onBackPress={() => setIsSidebarVisible(true)}
-            />
+            {selectedRoom ? (
+              <ChatScreen
+                room={selectedRoom}
+                session={session}
+                showBackButton={isMobile}
+                onBackPress={() => setIsSidebarVisible(true)}
+              />
+            ) : (
+              <View style={styles.emptyChatPanel}>
+                <Text style={styles.emptyChatTitle}>Select a room</Text>
+                <Text style={styles.emptyChatCopy}>Messages appear after an authorized room is available.</Text>
+              </View>
+            )}
           </View>
         ) : null}
       </View>
@@ -184,14 +344,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#075e54"
   },
+  loadingScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0f172a"
+  },
   appShell: {
     flex: 1,
     flexDirection: "row",
     backgroundColor: "#d8dbd5"
   },
   sidebar: {
-    width: 360,
-    maxWidth: "38%",
+    width: 380,
+    maxWidth: "40%",
     backgroundColor: "#ffffff",
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: "#cfd8dc"
@@ -202,13 +368,23 @@ const styles = StyleSheet.create({
     flex: 1
   },
   sidebarHeader: {
-    minHeight: 74,
+    minHeight: 78,
     paddingHorizontal: 18,
     paddingVertical: 12,
     backgroundColor: "#075e54",
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between"
+    justifyContent: "space-between",
+    gap: 12
+  },
+  headerIdentity: {
+    flex: 1,
+    minWidth: 0
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8
   },
   appTitle: {
     color: "#ffffff",
@@ -220,18 +396,32 @@ const styles = StyleSheet.create({
     color: "#c8e6df",
     fontSize: 13
   },
+  signOutButton: {
+    minHeight: 36,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.16)"
+  },
+  signOutButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800"
+  },
   headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.14)"
   },
   headerButtonText: {
     color: "#ffffff",
-    fontSize: 28,
-    lineHeight: 30
+    fontSize: 20,
+    lineHeight: 22,
+    fontWeight: "900"
   },
   searchWrap: {
     paddingHorizontal: 12,
@@ -240,11 +430,21 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     height: 42,
-    borderRadius: 21,
+    borderRadius: 8,
     paddingHorizontal: 16,
     backgroundColor: "#ffffff",
     color: "#1f2933",
     fontSize: 15
+  },
+  sidebarLoader: {
+    paddingVertical: 22
+  },
+  sidebarMessage: {
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    color: "#64748b",
+    fontSize: 14,
+    lineHeight: 20
   },
   roomList: {
     paddingVertical: 4
@@ -265,7 +465,7 @@ const styles = StyleSheet.create({
   roomAvatar: {
     width: 50,
     height: 50,
-    borderRadius: 25,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#25d366"
@@ -291,8 +491,9 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   },
   roomTime: {
-    color: "#7b8794",
-    fontSize: 12
+    color: "#0f766e",
+    fontSize: 12,
+    fontWeight: "800"
   },
   roomPreviewRow: {
     marginTop: 5,
@@ -305,20 +506,6 @@ const styles = StyleSheet.create({
     color: "#60746f",
     fontSize: 14
   },
-  unreadBadge: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    paddingHorizontal: 6,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#25d366"
-  },
-  unreadText: {
-    color: "#063b32",
-    fontSize: 12,
-    fontWeight: "900"
-  },
   chatPanel: {
     flex: 1,
     minWidth: 0
@@ -328,16 +515,34 @@ const styles = StyleSheet.create({
     top: 16,
     right: 14,
     zIndex: 10,
-    width: 40,
+    minWidth: 58,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(7,94,84,0.92)"
   },
   mobileMenuButtonText: {
     color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  emptyChatPanel: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+    backgroundColor: "#efeae2"
+  },
+  emptyChatTitle: {
+    color: "#1f2933",
     fontSize: 22,
-    lineHeight: 24
+    fontWeight: "900"
+  },
+  emptyChatCopy: {
+    marginTop: 8,
+    color: "#60746f",
+    fontSize: 15,
+    textAlign: "center"
   }
 });

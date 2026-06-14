@@ -11,34 +11,10 @@ import {
 } from "react-native";
 import { supabase } from "./supabaseClient";
 
-const CURRENT_USER_ID = "00000000-0000-0000-0000-000000000001";
-const DEFAULT_ROOM_ID = "general";
-
-function createLocalMessage(roomId, text, senderId = CURRENT_USER_ID) {
-  return {
-    id: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    room_id: roomId || DEFAULT_ROOM_ID,
-    sender_id: senderId,
-    text,
-    created_at: new Date().toISOString(),
-    is_local: true
-  };
-}
-
-function createMockMessages(roomId) {
-  return [
-    createLocalMessage(
-      roomId || DEFAULT_ROOM_ID,
-      "Local preview mode is ready. Supabase has no rows yet, but messages you send will appear here immediately.",
-      "mock-profile"
-    )
-  ];
-}
-
 export async function fetchMessages(roomId) {
   const { data, error } = await supabase
     .from("messages")
-    .select("*")
+    .select("id, room_id, sender_id, text, created_at")
     .eq("room_id", roomId)
     .order("created_at", { ascending: true });
 
@@ -57,7 +33,7 @@ export async function sendMessage(roomId, text, senderId) {
       sender_id: senderId,
       text
     })
-    .select()
+    .select("id, room_id, sender_id, text, created_at")
     .single();
 
   if (error) {
@@ -71,60 +47,68 @@ export async function sendMessage(roomId, text, senderId) {
   return data;
 }
 
-export default function ChatScreen({ room, onBackPress, showBackButton }) {
+function createPendingMessage(roomId, text, senderId) {
+  return {
+    id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    room_id: roomId,
+    sender_id: senderId,
+    text,
+    created_at: new Date().toISOString(),
+    is_pending: true
+  };
+}
+
+export default function ChatScreen({ room, session, onBackPress, showBackButton }) {
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
   const listRef = useRef(null);
 
-  const roomId = room?.id ?? DEFAULT_ROOM_ID;
+  const roomId = room?.id ?? null;
+  const userId = session?.user?.id ?? null;
 
-  const visibleMessages = useMemo(
-    () => messages.filter((message) => message.room_id === roomId),
-    [messages, roomId]
+  const canSend = useMemo(
+    () => Boolean(roomId && userId && messageText.trim()),
+    [messageText, roomId, userId]
   );
 
   useEffect(() => {
     let isMounted = true;
 
+    setMessages([]);
+    setError("");
+
+    if (!roomId || !userId) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
     async function loadExistingMessages() {
+      setIsLoading(true);
+
       try {
         const existingMessages = await fetchMessages(roomId);
 
         if (isMounted) {
-          setMessages((currentMessages) => {
-            const otherRoomMessages = currentMessages.filter((message) => message.room_id !== roomId);
-            const currentRoomMessages = currentMessages.filter((message) => message.room_id === roomId);
-
-            if (existingMessages.length > 0) {
-              return [...otherRoomMessages, ...existingMessages];
-            }
-
-            if (currentRoomMessages.length > 0) {
-              return currentMessages;
-            }
-
-            return [...otherRoomMessages, ...createMockMessages(roomId)];
-          });
+          setMessages(existingMessages);
         }
-      } catch (error) {
-        console.error("Failed to fetch messages:", error.message);
-
+      } catch (loadError) {
         if (isMounted) {
-          setMessages((currentMessages) =>
-            currentMessages.some((message) => message.room_id === roomId)
-              ? currentMessages
-              : createMockMessages(roomId)
-          );
+          setError(loadError.message ?? "Failed to fetch messages.");
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
         }
       }
     }
 
     loadExistingMessages();
 
-    // Supabase pushes only new rows from this room into the payload handler below.
-    // The handler appends payload.new to React state, which updates FlatList immediately.
     const channel = supabase
-      .channel(`messages:${roomId}`)
+      .channel(`room:${roomId}:messages`)
       .on(
         "postgres_changes",
         {
@@ -135,13 +119,23 @@ export default function ChatScreen({ room, onBackPress, showBackButton }) {
         },
         (payload) => {
           setMessages((currentMessages) => {
-            const alreadyExists = currentMessages.some((message) => message.id === payload.new.id);
+            const incomingMessage = payload.new;
+            const alreadyExists = currentMessages.some((message) => message.id === incomingMessage.id);
 
             if (alreadyExists) {
               return currentMessages;
             }
 
-            return [...currentMessages, payload.new];
+            const withoutPendingDuplicate = currentMessages.filter(
+              (message) =>
+                !(
+                  message.is_pending &&
+                  message.sender_id === incomingMessage.sender_id &&
+                  message.text === incomingMessage.text
+                )
+            );
+
+            return [...withoutPendingDuplicate, incomingMessage];
           });
         }
       )
@@ -151,7 +145,7 @@ export default function ChatScreen({ room, onBackPress, showBackButton }) {
       isMounted = false;
       supabase.removeChannel(channel);
     };
-  }, [roomId]);
+  }, [roomId, userId]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -159,35 +153,38 @@ export default function ChatScreen({ room, onBackPress, showBackButton }) {
     }, 80);
 
     return () => clearTimeout(timeout);
-  }, [visibleMessages.length]);
+  }, [messages.length]);
 
   const handleSendMessage = useCallback(async () => {
     const trimmedText = messageText.trim();
 
-    if (!trimmedText) {
+    if (!roomId || !userId || !trimmedText) {
       return;
     }
 
     setMessageText("");
-    const localMessage = createLocalMessage(roomId, trimmedText, CURRENT_USER_ID);
-    setMessages((currentMessages) => [...currentMessages, localMessage]);
+    setError("");
+    const pendingMessage = createPendingMessage(roomId, trimmedText, userId);
+    setMessages((currentMessages) => [...currentMessages, pendingMessage]);
 
     try {
-      const savedMessage = await sendMessage(roomId, trimmedText, CURRENT_USER_ID);
+      const savedMessage = await sendMessage(roomId, trimmedText, userId);
 
       setMessages((currentMessages) => [
         ...currentMessages.filter(
-          (message) => message.id !== localMessage.id && message.id !== savedMessage.id
+          (message) => message.id !== pendingMessage.id && message.id !== savedMessage.id
         ),
         savedMessage
       ]);
-    } catch (error) {
-      console.error("Failed to send message:", error.message);
+    } catch (sendError) {
+      setMessages((currentMessages) => currentMessages.filter((message) => message.id !== pendingMessage.id));
+      setError(sendError.message ?? "Failed to send message.");
+      setMessageText(trimmedText);
     }
-  }, [messageText, roomId]);
+  }, [messageText, roomId, userId]);
 
   const renderMessage = ({ item }) => {
-    const isMine = item.sender_id === CURRENT_USER_ID;
+    const isMine = item.sender_id === userId;
 
     return (
       <View style={[styles.messageRow, isMine ? styles.sentRow : styles.receivedRow]}>
@@ -195,9 +192,12 @@ export default function ChatScreen({ room, onBackPress, showBackButton }) {
           <Text style={[styles.messageText, isMine ? styles.sentText : styles.receivedText]}>
             {item.text}
           </Text>
-          <Text style={[styles.messageTime, isMine ? styles.sentTime : styles.receivedTime]}>
-            {formatMessageTime(item.created_at)}
-          </Text>
+          <View style={styles.metaRow}>
+            {item.is_pending ? <Text style={styles.pendingText}>Sending</Text> : null}
+            <Text style={[styles.messageTime, isMine ? styles.sentTime : styles.receivedTime]}>
+              {formatMessageTime(item.created_at)}
+            </Text>
+          </View>
         </View>
       </View>
     );
@@ -212,29 +212,39 @@ export default function ChatScreen({ room, onBackPress, showBackButton }) {
             onPress={onBackPress}
             style={styles.backButton}
           >
-            <Text style={styles.backButtonText}>‹</Text>
+            <Text style={styles.backButtonText}>{"<"}</Text>
           </TouchableOpacity>
         ) : null}
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{room?.initials ?? "GC"}</Text>
+          <Text style={styles.avatarText}>{room?.initials ?? "CH"}</Text>
         </View>
         <View style={styles.headerTextGroup}>
           <Text numberOfLines={1} style={styles.roomName}>
-            {room?.room_name ?? "General Chat"}
+            {room?.room_name ?? "Chat"}
           </Text>
           <Text numberOfLines={1} style={styles.presenceText}>
-            realtime ready
+            realtime secured
           </Text>
         </View>
       </View>
 
+      {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
+
       <FlatList
         ref={listRef}
-        data={visibleMessages}
+        data={messages}
         keyExtractor={(item) => String(item.id)}
         renderItem={renderMessage}
-        contentContainerStyle={styles.messagesContent}
+        contentContainerStyle={[styles.messagesContent, messages.length === 0 && styles.emptyMessagesContent]}
         keyboardShouldPersistTaps="handled"
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>{isLoading ? "Loading messages" : "No messages yet"}</Text>
+            <Text style={styles.emptyCopy}>
+              {isLoading ? "Fetching the latest room history." : "Start the conversation in this room."}
+            </Text>
+          </View>
+        }
       />
 
       <KeyboardAvoidingView
@@ -255,8 +265,9 @@ export default function ChatScreen({ room, onBackPress, showBackButton }) {
           />
           <TouchableOpacity
             accessibilityRole="button"
+            disabled={!canSend}
             onPress={handleSendMessage}
-            style={[styles.sendButton, !messageText.trim() && styles.sendButtonDisabled]}
+            style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
           >
             <Text style={styles.sendButtonText}>Send</Text>
           </TouchableOpacity>
@@ -303,7 +314,7 @@ const styles = StyleSheet.create({
   avatar: {
     width: 42,
     height: 42,
-    borderRadius: 21,
+    borderRadius: 8,
     backgroundColor: "#128c7e",
     alignItems: "center",
     justifyContent: "center"
@@ -313,7 +324,8 @@ const styles = StyleSheet.create({
     fontWeight: "800"
   },
   headerTextGroup: {
-    flex: 1
+    flex: 1,
+    minWidth: 0
   },
   roomName: {
     color: "#1f2933",
@@ -325,10 +337,38 @@ const styles = StyleSheet.create({
     color: "#60746f",
     fontSize: 13
   },
+  errorBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "#fee2e2",
+    color: "#991b1b",
+    fontSize: 13,
+    fontWeight: "700"
+  },
   messagesContent: {
     paddingHorizontal: 14,
     paddingTop: 18,
     paddingBottom: 96
+  },
+  emptyMessagesContent: {
+    flexGrow: 1
+  },
+  emptyState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24
+  },
+  emptyTitle: {
+    color: "#1f2933",
+    fontSize: 20,
+    fontWeight: "900"
+  },
+  emptyCopy: {
+    marginTop: 8,
+    color: "#64748b",
+    fontSize: 14,
+    textAlign: "center"
   },
   messageRow: {
     flexDirection: "row",
@@ -365,9 +405,19 @@ const styles = StyleSheet.create({
   receivedText: {
     color: "#1f2933"
   },
-  messageTime: {
+  metaRow: {
     marginTop: 4,
     alignSelf: "flex-end",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
+  },
+  pendingText: {
+    color: "#61785d",
+    fontSize: 11,
+    fontWeight: "700"
+  },
+  messageTime: {
     fontSize: 11
   },
   sentTime: {
@@ -397,7 +447,7 @@ const styles = StyleSheet.create({
     flex: 1,
     maxHeight: 120,
     minHeight: 44,
-    borderRadius: 22,
+    borderRadius: 8,
     paddingHorizontal: 16,
     paddingTop: 11,
     paddingBottom: 11,
@@ -408,7 +458,7 @@ const styles = StyleSheet.create({
   sendButton: {
     minWidth: 64,
     height: 44,
-    borderRadius: 22,
+    borderRadius: 8,
     paddingHorizontal: 16,
     alignItems: "center",
     justifyContent: "center",
