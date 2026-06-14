@@ -5,6 +5,7 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -139,7 +140,10 @@ export default function AuthScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.screen}
       >
-        <View style={styles.backgroundPanel}>
+        <ScrollView
+          contentContainerStyle={styles.backgroundPanel}
+          keyboardShouldPersistTaps="handled"
+        >
           <View style={styles.brandBlock}>
             <Text style={styles.brandKicker}>Forge</Text>
             <Text style={styles.brandTitle}>Your private command center.</Text>
@@ -251,7 +255,7 @@ export default function AuthScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -266,9 +270,9 @@ const styles = StyleSheet.create({
     flex: 1
   },
   backgroundPanel: {
-    flex: 1,
+    flexGrow: 1,
     paddingHorizontal: 22,
-    paddingVertical: 24,
+    paddingVertical: 34,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#07111f"
@@ -276,7 +280,7 @@ const styles = StyleSheet.create({
   brandBlock: {
     width: "100%",
     maxWidth: 430,
-    marginBottom: 22
+    marginBottom: 18
   },
   brandKicker: {
     color: "#67e8f9",
@@ -287,8 +291,8 @@ const styles = StyleSheet.create({
   brandTitle: {
     marginTop: 8,
     color: "#ffffff",
-    fontSize: 40,
-    lineHeight: 46,
+    fontSize: 36,
+    lineHeight: 42,
     fontWeight: "900"
   },
   brandSubtitle: {
