@@ -1,0 +1,26 @@
+{
+  "name": "whatsapp-clone-expo-supabase",
+  "version": "1.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~3.2.3",
+    "@opentelemetry/api": "^1.9.1",
+    "@supabase/supabase-js": "^2.45.4",
+    "expo": "~51.0.28",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-native": "0.74.5",
+    "react-native-url-polyfill": "^2.0.0",
+    "react-native-web": "~0.19.10"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0"
+  }
+}

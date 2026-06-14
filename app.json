@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "WhatsApp Clone",
+    "slug": "whatsapp-clone-expo-supabase",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

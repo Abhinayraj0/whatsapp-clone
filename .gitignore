@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-test/
+.expo/
+expo-server.log
+expo-server.err.log
+npm-debug.log*
