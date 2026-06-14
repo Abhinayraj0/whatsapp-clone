@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
-import { supabase } from "./supabaseClient";
+import { supabase, supabaseConfigError } from "./supabaseClient";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -45,7 +45,7 @@ export default function AuthScreen() {
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(supabaseConfigError);
 
   const isSignup = mode === "sign-up";
 
@@ -65,12 +65,16 @@ export default function AuthScreen() {
     return "";
   }, [displayName, email, password, isSignup]);
 
-  const canSubmit = !validation && !isSubmitting;
+  const canSubmit = !supabaseConfigError && !validation && !isSubmitting;
 
   const handleSubmit = async () => {
     const normalizedEmail = email.trim().toLowerCase();
     setNotice("");
-    setError("");
+    setError(supabaseConfigError);
+
+    if (supabaseConfigError) {
+      return;
+    }
 
     if (validation) {
       setError(validation);
@@ -126,7 +130,7 @@ export default function AuthScreen() {
   const switchMode = () => {
     setMode(isSignup ? "sign-in" : "sign-up");
     setNotice("");
-    setError("");
+    setError(supabaseConfigError);
   };
 
   return (
