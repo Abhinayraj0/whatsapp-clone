@@ -1,4 +1,4 @@
--- Supabase setup for Secure Chat.
+-- Supabase setup for Forge.
 -- Run this in Supabase SQL Editor after creating/authenticating the project.
 
 create extension if not exists pgcrypto;

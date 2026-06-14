@@ -560,7 +560,7 @@ export default function App() {
           <View style={[styles.sidebar, isMobile && styles.mobileSidebar]}>
             <View style={styles.sidebarHeader}>
               <View style={styles.headerIdentity}>
-                <Text style={styles.appKicker}>Secure Chat</Text>
+                <Text style={styles.appKicker}>Forge</Text>
                 <Text style={styles.appTitle}>Command Center</Text>
                 <Text numberOfLines={1} style={styles.appSubtitle}>
                   {session.user.email}

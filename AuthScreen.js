@@ -141,7 +141,7 @@ export default function AuthScreen() {
       >
         <View style={styles.backgroundPanel}>
           <View style={styles.brandBlock}>
-            <Text style={styles.brandKicker}>Secure Chat</Text>
+            <Text style={styles.brandKicker}>Forge</Text>
             <Text style={styles.brandTitle}>Your private command center.</Text>
             <Text style={styles.brandSubtitle}>Realtime direct messaging with verified identity and a calmer workspace.</Text>
             <View style={styles.featureGrid}>
