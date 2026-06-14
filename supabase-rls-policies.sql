@@ -447,3 +447,52 @@ end;
 $$;
 
 grant execute on function public.create_direct_chat(uuid) to authenticated;
+
+-- Enable Realtime replication for tables if not already added
+do $$
+begin
+  -- messages table
+  if not exists (
+    select 1 
+    from pg_publication_tables 
+    where pubname = 'supabase_realtime' 
+      and schemaname = 'public' 
+      and tablename = 'messages'
+  ) then
+    alter publication supabase_realtime add table public.messages;
+  end if;
+
+  -- rooms table
+  if not exists (
+    select 1 
+    from pg_publication_tables 
+    where pubname = 'supabase_realtime' 
+      and schemaname = 'public' 
+      and tablename = 'rooms'
+  ) then
+    alter publication supabase_realtime add table public.rooms;
+  end if;
+
+  -- room_members table
+  if not exists (
+    select 1 
+    from pg_publication_tables 
+    where pubname = 'supabase_realtime' 
+      and schemaname = 'public' 
+      and tablename = 'room_members'
+  ) then
+    alter publication supabase_realtime add table public.room_members;
+  end if;
+
+  -- profiles table
+  if not exists (
+    select 1 
+    from pg_publication_tables 
+    where pubname = 'supabase_realtime' 
+      and schemaname = 'public' 
+      and tablename = 'profiles'
+  ) then
+    alter publication supabase_realtime add table public.profiles;
+  end if;
+end $$;
+

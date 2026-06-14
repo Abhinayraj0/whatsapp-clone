@@ -406,6 +406,42 @@ export default function App() {
     };
   }, [loadRooms, session?.user?.id]);
 
+  useEffect(() => {
+    if (!session?.user?.id) {
+      return;
+    }
+
+    const channel = supabase
+      .channel("sidebar-realtime-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "room_members" },
+        () => {
+          loadRooms();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rooms" },
+        () => {
+          loadRooms();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        () => {
+          loadRooms();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id, loadRooms]);
+
+
   const selectedRoom = useMemo(
     () => rooms.find((room) => room.id === selectedRoomId) ?? null,
     [rooms, selectedRoomId]
