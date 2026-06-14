@@ -7,6 +7,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View
 } from "react-native";
 import { supabase } from "./supabaseClient";
@@ -59,8 +60,13 @@ function createPendingMessage(roomId, text, senderId) {
 }
 
 export default function ChatScreen({ room, session, onBackPress, showBackButton }) {
+  const { width } = useWindowDimensions();
+  const isCompact = width < 560;
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState("");
+  const [messageSearch, setMessageSearch] = useState("");
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const listRef = useRef(null);
@@ -72,6 +78,41 @@ export default function ChatScreen({ room, session, onBackPress, showBackButton 
     () => Boolean(roomId && userId && messageText.trim()),
     [messageText, roomId, userId]
   );
+
+  const visibleMessages = useMemo(() => {
+    const query = messageSearch.trim().toLowerCase();
+
+    if (!query) {
+      return messages;
+    }
+
+    return messages.filter((message) => message.text?.toLowerCase().includes(query));
+  }, [messages, messageSearch]);
+
+  const timelineItems = useMemo(() => {
+    const items = [];
+    let lastDateLabel = "";
+
+    for (const message of visibleMessages) {
+      const dateLabel = formatMessageDate(message.created_at);
+
+      if (dateLabel !== lastDateLabel) {
+        items.push({
+          id: `date-${dateLabel}`,
+          type: "date",
+          label: dateLabel
+        });
+        lastDateLabel = dateLabel;
+      }
+
+      items.push({
+        ...message,
+        type: "message"
+      });
+    }
+
+    return items;
+  }, [visibleMessages]);
 
   useEffect(() => {
     let isMounted = true;
@@ -183,7 +224,25 @@ export default function ChatScreen({ room, session, onBackPress, showBackButton 
     }
   }, [messageText, roomId, userId]);
 
+  const handleQuickReply = useCallback((value) => {
+    setMessageText((currentText) => {
+      if (!currentText.trim()) {
+        return value;
+      }
+
+      return `${currentText.trim()} ${value}`;
+    });
+  }, []);
+
   const renderMessage = ({ item }) => {
+    if (item.type === "date") {
+      return (
+        <View style={styles.dateRow}>
+          <Text style={styles.datePill}>{item.label}</Text>
+        </View>
+      );
+    }
+
     const isMine = item.sender_id === userId;
 
     return (
@@ -193,7 +252,7 @@ export default function ChatScreen({ room, session, onBackPress, showBackButton 
             {item.text}
           </Text>
           <View style={styles.metaRow}>
-            {item.is_pending ? <Text style={styles.pendingText}>Sending</Text> : null}
+            {item.is_pending ? <Text style={styles.pendingText}>Queued</Text> : null}
             <Text style={[styles.messageTime, isMine ? styles.sentTime : styles.receivedTime]}>
               {formatMessageTime(item.created_at)}
             </Text>
@@ -223,25 +282,79 @@ export default function ChatScreen({ room, session, onBackPress, showBackButton 
             {room?.room_name ?? "Chat"}
           </Text>
           <Text numberOfLines={1} style={styles.presenceText}>
-            realtime secured
+            realtime secured - {messages.length} messages
           </Text>
         </View>
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={() => setIsSearchOpen((current) => !current)}
+          style={[styles.headerIconButton, isSearchOpen && styles.headerIconButtonActive]}
+        >
+          <Text style={styles.headerIconButtonText}>S</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={() => setIsDetailsOpen((current) => !current)}
+          style={[styles.headerIconButton, isDetailsOpen && styles.headerIconButtonActive]}
+        >
+          <Text style={styles.headerIconButtonText}>I</Text>
+        </TouchableOpacity>
       </View>
+
+      {isSearchOpen ? (
+        <View style={styles.searchPanel}>
+          <TextInput
+            value={messageSearch}
+            onChangeText={setMessageSearch}
+            placeholder="Search this conversation"
+            placeholderTextColor="#8a99aa"
+            style={styles.searchInput}
+          />
+          {messageSearch.trim() ? (
+            <Text style={styles.searchMeta}>
+              {visibleMessages.length} of {messages.length} messages
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {isDetailsOpen ? (
+        <View style={styles.detailsPanel}>
+          <View style={styles.detailsMetric}>
+            <Text style={styles.detailsValue}>{messages.length}</Text>
+            <Text style={styles.detailsLabel}>Messages</Text>
+          </View>
+          <View style={styles.detailsMetric}>
+            <Text style={styles.detailsValue}>Live</Text>
+            <Text style={styles.detailsLabel}>Realtime</Text>
+          </View>
+          <View style={styles.detailsMetric}>
+            <Text style={styles.detailsValue}>Private</Text>
+            <Text style={styles.detailsLabel}>Room type</Text>
+          </View>
+        </View>
+      ) : null}
 
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
       <FlatList
         ref={listRef}
-        data={messages}
+        data={timelineItems}
         keyExtractor={(item) => String(item.id)}
         renderItem={renderMessage}
-        contentContainerStyle={[styles.messagesContent, messages.length === 0 && styles.emptyMessagesContent]}
+        contentContainerStyle={[styles.messagesContent, timelineItems.length === 0 && styles.emptyMessagesContent]}
         keyboardShouldPersistTaps="handled"
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>{isLoading ? "Loading messages" : "No messages yet"}</Text>
+            <Text style={styles.emptyTitle}>
+              {isLoading ? "Loading messages" : messageSearch.trim() ? "No matching messages" : "No messages yet"}
+            </Text>
             <Text style={styles.emptyCopy}>
-              {isLoading ? "Fetching the latest room history." : "Start the conversation in this room."}
+              {isLoading
+                ? "Fetching the latest room history."
+                : messageSearch.trim()
+                  ? "Try a different word or clear search."
+                  : "Start the conversation in this room."}
             </Text>
           </View>
         }
@@ -252,6 +365,18 @@ export default function ChatScreen({ room, session, onBackPress, showBackButton 
         keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
         style={styles.inputDock}
       >
+        <View style={styles.quickReplyRow}>
+          {["On it", "Sounds good", "Call me"].map((reply) => (
+            <TouchableOpacity
+              key={reply}
+              accessibilityRole="button"
+              onPress={() => handleQuickReply(reply)}
+              style={styles.quickReplyButton}
+            >
+              <Text style={styles.quickReplyText}>{reply}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
         <View style={styles.inputBar}>
           <TextInput
             value={messageText}
@@ -272,9 +397,34 @@ export default function ChatScreen({ room, session, onBackPress, showBackButton 
             <Text style={styles.sendButtonText}>Send</Text>
           </TouchableOpacity>
         </View>
+        <View style={styles.composerMetaRow}>
+          <Text style={styles.composerHint}>{isCompact ? "Realtime private room" : "Shift+Enter for a new line on desktop"}</Text>
+          <Text style={styles.composerCount}>{messageText.length}/1000</Text>
+        </View>
       </KeyboardAvoidingView>
     </View>
   );
+}
+
+function formatMessageDate(value) {
+  const messageDate = new Date(value);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (messageDate.toDateString() === today.toDateString()) {
+    return "Today";
+  }
+
+  if (messageDate.toDateString() === yesterday.toDateString()) {
+    return "Yesterday";
+  }
+
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: messageDate.getFullYear() === today.getFullYear() ? undefined : "numeric"
+  }).format(messageDate);
 }
 
 function formatMessageTime(value) {
@@ -287,15 +437,16 @@ function formatMessageTime(value) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#efeae2"
+    backgroundColor: "#07111f"
   },
   header: {
-    minHeight: 68,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    minHeight: 76,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#d9d0c5",
-    backgroundColor: "#f7f5f2",
+    borderBottomColor: "#d9e2ec",
+    backgroundColor: "rgba(255,255,255,0.9)",
+    backdropFilter: "blur(18px)",
     flexDirection: "row",
     alignItems: "center",
     gap: 12
@@ -307,15 +458,15 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   backButtonText: {
-    color: "#075e54",
+    color: "#0f766e",
     fontSize: 34,
     lineHeight: 34
   },
   avatar: {
-    width: 42,
-    height: 42,
+    width: 48,
+    height: 48,
     borderRadius: 8,
-    backgroundColor: "#128c7e",
+    backgroundColor: "#0f766e",
     alignItems: "center",
     justifyContent: "center"
   },
@@ -328,14 +479,90 @@ const styles = StyleSheet.create({
     minWidth: 0
   },
   roomName: {
-    color: "#1f2933",
-    fontSize: 17,
-    fontWeight: "700"
+    color: "#172033",
+    fontSize: 18,
+    fontWeight: "900"
   },
   presenceText: {
     marginTop: 2,
-    color: "#60746f",
+    color: "#64748b",
     fontSize: 13
+  },
+  headerIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#eef4f8",
+    borderWidth: 1,
+    borderColor: "#dbe7ef"
+  },
+  headerIconButtonActive: {
+    backgroundColor: "#e6fffb",
+    borderColor: "#99f6e4"
+  },
+  headerIconButtonText: {
+    color: "#0f766e",
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  searchPanel: {
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    backgroundColor: "rgba(255,255,255,0.88)",
+    backdropFilter: "blur(18px)",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e2e8f0",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12
+  },
+  searchInput: {
+    flex: 1,
+    height: 42,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#dbe7ef",
+    paddingHorizontal: 14,
+    backgroundColor: "rgba(248,250,252,0.82)",
+    backdropFilter: "blur(18px)",
+    color: "#172033",
+    fontSize: 14
+  },
+  searchMeta: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "800"
+  },
+  detailsPanel: {
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    backgroundColor: "#f8fafc",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e2e8f0",
+    flexDirection: "row",
+    gap: 10
+  },
+  detailsMetric: {
+    flex: 1,
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0"
+  },
+  detailsValue: {
+    color: "#0f172a",
+    fontSize: 15,
+    fontWeight: "900"
+  },
+  detailsLabel: {
+    marginTop: 4,
+    color: "#64748b",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase"
   },
   errorBanner: {
     paddingHorizontal: 16,
@@ -346,9 +573,10 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   },
   messagesContent: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 18,
     paddingTop: 18,
-    paddingBottom: 96
+    paddingBottom: 148,
+    backgroundColor: "#eef4f8"
   },
   emptyMessagesContent: {
     flexGrow: 1
@@ -360,7 +588,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24
   },
   emptyTitle: {
-    color: "#1f2933",
+    color: "#172033",
     fontSize: 20,
     fontWeight: "900"
   },
@@ -374,6 +602,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     marginBottom: 10
   },
+  dateRow: {
+    alignItems: "center",
+    marginBottom: 14,
+    marginTop: 2
+  },
+  datePill: {
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    overflow: "hidden",
+    backgroundColor: "#e2e8f0",
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: "900"
+  },
   sentRow: {
     justifyContent: "flex-end"
   },
@@ -381,18 +624,24 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start"
   },
   bubble: {
-    maxWidth: "78%",
+    maxWidth: "76%",
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 6
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 8,
+    shadowColor: "#0f172a",
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2
   },
   sentBubble: {
-    backgroundColor: "#dcf8c6",
+    backgroundColor: "#0f766e",
     borderTopRightRadius: 2
   },
   receivedBubble: {
-    backgroundColor: "#ffffff",
+    backgroundColor: "rgba(255,255,255,0.92)",
+    backdropFilter: "blur(12px)",
     borderTopLeftRadius: 2
   },
   messageText: {
@@ -400,7 +649,7 @@ const styles = StyleSheet.create({
     lineHeight: 21
   },
   sentText: {
-    color: "#1f2933"
+    color: "#ffffff"
   },
   receivedText: {
     color: "#1f2933"
@@ -413,7 +662,7 @@ const styles = StyleSheet.create({
     gap: 6
   },
   pendingText: {
-    color: "#61785d",
+    color: "#cffafe",
     fontSize: 11,
     fontWeight: "700"
   },
@@ -421,7 +670,7 @@ const styles = StyleSheet.create({
     fontSize: 11
   },
   sentTime: {
-    color: "#61785d"
+    color: "#ccfbf1"
   },
   receivedTime: {
     color: "#7b8794"
@@ -431,10 +680,11 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    paddingHorizontal: 12,
-    paddingTop: 8,
+    paddingHorizontal: 16,
+    paddingTop: 10,
     paddingBottom: 12,
-    backgroundColor: "#f0f2f5",
+    backgroundColor: "rgba(255,255,255,0.92)",
+    backdropFilter: "blur(18px)",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#d0d7de"
   },
@@ -446,23 +696,25 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     maxHeight: 120,
-    minHeight: 44,
+    minHeight: 48,
     borderRadius: 8,
     paddingHorizontal: 16,
-    paddingTop: 11,
-    paddingBottom: 11,
-    backgroundColor: "#ffffff",
+    paddingTop: 12,
+    paddingBottom: 12,
+    backgroundColor: "#f8fafc",
     color: "#1f2933",
-    fontSize: 16
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: "#dbe7ef"
   },
   sendButton: {
-    minWidth: 64,
-    height: 44,
+    minWidth: 72,
+    height: 48,
     borderRadius: 8,
     paddingHorizontal: 16,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#128c7e"
+    backgroundColor: "#0f766e"
   },
   sendButtonDisabled: {
     opacity: 0.5
@@ -471,5 +723,42 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 15,
     fontWeight: "800"
+  },
+  quickReplyRow: {
+    marginBottom: 8,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  quickReplyButton: {
+    height: 32,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#eef4f8",
+    borderWidth: 1,
+    borderColor: "#dbe7ef"
+  },
+  quickReplyText: {
+    color: "#425466",
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  composerMetaRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  composerHint: {
+    color: "#94a3b8",
+    fontSize: 11,
+    fontWeight: "700"
+  },
+  composerCount: {
+    color: "#64748b",
+    fontSize: 11,
+    fontWeight: "900"
   }
 });

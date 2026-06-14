@@ -141,8 +141,23 @@ export default function AuthScreen() {
       >
         <View style={styles.backgroundPanel}>
           <View style={styles.brandBlock}>
-            <Text style={styles.brandTitle}>Secure Chat</Text>
-            <Text style={styles.brandSubtitle}>Private rooms, realtime delivery, verified identity.</Text>
+            <Text style={styles.brandKicker}>Secure Chat</Text>
+            <Text style={styles.brandTitle}>Your private command center.</Text>
+            <Text style={styles.brandSubtitle}>Realtime direct messaging with verified identity and a calmer workspace.</Text>
+            <View style={styles.featureGrid}>
+              <View style={styles.featurePill}>
+                <Text style={styles.featureValue}>Live</Text>
+                <Text style={styles.featureLabel}>Delivery</Text>
+              </View>
+              <View style={styles.featurePill}>
+                <Text style={styles.featureValue}>Private</Text>
+                <Text style={styles.featureLabel}>Rooms</Text>
+              </View>
+              <View style={styles.featurePill}>
+                <Text style={styles.featureValue}>Email</Text>
+                <Text style={styles.featureLabel}>Discovery</Text>
+              </View>
+            </View>
           </View>
 
           <View style={styles.card}>
@@ -245,34 +260,68 @@ export default function AuthScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#0f172a"
+    backgroundColor: "#07111f"
   },
   screen: {
     flex: 1
   },
   backgroundPanel: {
     flex: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: 22,
     paddingVertical: 24,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#0f172a"
+    backgroundColor: "#07111f"
   },
   brandBlock: {
     width: "100%",
     maxWidth: 430,
     marginBottom: 22
   },
+  brandKicker: {
+    color: "#67e8f9",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase"
+  },
   brandTitle: {
+    marginTop: 8,
     color: "#ffffff",
-    fontSize: 38,
+    fontSize: 40,
+    lineHeight: 46,
     fontWeight: "900"
   },
   brandSubtitle: {
-    marginTop: 8,
-    color: "#cbd5e1",
+    marginTop: 10,
+    color: "#b6c7d8",
     fontSize: 16,
     lineHeight: 23
+  },
+  featureGrid: {
+    marginTop: 18,
+    flexDirection: "row",
+    gap: 8
+  },
+  featurePill: {
+    flex: 1,
+    minHeight: 58,
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: "#10243c",
+    borderWidth: 1,
+    borderColor: "#1f3654"
+  },
+  featureValue: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  featureLabel: {
+    marginTop: 4,
+    color: "#8fb2c8",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase"
   },
   card: {
     width: "100%",
@@ -281,7 +330,7 @@ const styles = StyleSheet.create({
     padding: 22,
     backgroundColor: "#ffffff",
     shadowColor: "#000000",
-    shadowOpacity: 0.24,
+    shadowOpacity: 0.3,
     shadowRadius: 28,
     shadowOffset: { width: 0, height: 18 },
     elevation: 8
@@ -312,7 +361,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     marginTop: 24,
-    color: "#111827",
+    color: "#172033",
     fontSize: 25,
     fontWeight: "900"
   },

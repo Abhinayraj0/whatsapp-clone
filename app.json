@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "WhatsApp Clone",
-    "slug": "whatsapp-clone-expo-supabase",
+    "name": "Secure Chat",
+    "slug": "secure-chat",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",

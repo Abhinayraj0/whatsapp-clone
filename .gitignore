@@ -7,3 +7,6 @@ dist-test/
 expo-server.log
 expo-server.err.log
 npm-debug.log*
+*.log
+
+.vercel
