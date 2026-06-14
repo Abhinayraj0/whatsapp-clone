@@ -12,6 +12,28 @@ import {
 import { supabase } from "./supabaseClient";
 
 const CURRENT_USER_ID = "00000000-0000-0000-0000-000000000001";
+const DEFAULT_ROOM_ID = "general";
+
+function createLocalMessage(roomId, text, senderId = CURRENT_USER_ID) {
+  return {
+    id: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    room_id: roomId || DEFAULT_ROOM_ID,
+    sender_id: senderId,
+    text,
+    created_at: new Date().toISOString(),
+    is_local: true
+  };
+}
+
+function createMockMessages(roomId) {
+  return [
+    createLocalMessage(
+      roomId || DEFAULT_ROOM_ID,
+      "Local preview mode is ready. Supabase has no rows yet, but messages you send will appear here immediately.",
+      "mock-profile"
+    )
+  ];
+}
 
 export async function fetchMessages(roomId) {
   const { data, error } = await supabase
@@ -42,6 +64,10 @@ export async function sendMessage(roomId, text, senderId) {
     throw error;
   }
 
+  if (!data) {
+    throw new Error("Supabase insert returned no message row.");
+  }
+
   return data;
 }
 
@@ -50,7 +76,7 @@ export default function ChatScreen({ room, onBackPress, showBackButton }) {
   const [messageText, setMessageText] = useState("");
   const listRef = useRef(null);
 
-  const roomId = room?.id ?? "general";
+  const roomId = room?.id ?? DEFAULT_ROOM_ID;
 
   const visibleMessages = useMemo(
     () => messages.filter((message) => message.room_id === roomId),
@@ -65,10 +91,31 @@ export default function ChatScreen({ room, onBackPress, showBackButton }) {
         const existingMessages = await fetchMessages(roomId);
 
         if (isMounted) {
-          setMessages(existingMessages);
+          setMessages((currentMessages) => {
+            const otherRoomMessages = currentMessages.filter((message) => message.room_id !== roomId);
+            const currentRoomMessages = currentMessages.filter((message) => message.room_id === roomId);
+
+            if (existingMessages.length > 0) {
+              return [...otherRoomMessages, ...existingMessages];
+            }
+
+            if (currentRoomMessages.length > 0) {
+              return currentMessages;
+            }
+
+            return [...otherRoomMessages, ...createMockMessages(roomId)];
+          });
         }
       } catch (error) {
         console.error("Failed to fetch messages:", error.message);
+
+        if (isMounted) {
+          setMessages((currentMessages) =>
+            currentMessages.some((message) => message.room_id === roomId)
+              ? currentMessages
+              : createMockMessages(roomId)
+          );
+        }
       }
     }
 
@@ -122,14 +169,20 @@ export default function ChatScreen({ room, onBackPress, showBackButton }) {
     }
 
     setMessageText("");
+    const localMessage = createLocalMessage(roomId, trimmedText, CURRENT_USER_ID);
+    setMessages((currentMessages) => [...currentMessages, localMessage]);
 
     try {
-      await sendMessage(roomId, trimmedText, CURRENT_USER_ID);
-      // No local append is needed here. The INSERT event from Supabase realtime
-      // comes back through the channel above and becomes the single source of truth.
+      const savedMessage = await sendMessage(roomId, trimmedText, CURRENT_USER_ID);
+
+      setMessages((currentMessages) => [
+        ...currentMessages.filter(
+          (message) => message.id !== localMessage.id && message.id !== savedMessage.id
+        ),
+        savedMessage
+      ]);
     } catch (error) {
       console.error("Failed to send message:", error.message);
-      setMessageText(trimmedText);
     }
   }, [messageText, roomId]);
 
